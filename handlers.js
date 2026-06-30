@@ -381,9 +381,8 @@ async function sendPaymentInvoice(ctx, db, userId, targetUserId) {
     });
   }
 
-  // Narx tiyinda beriladi: 1 so'm = 100 tiyin (UZS uchun standart)
-  const amountInTiyin = PROFILE_PRICE * 100;
-
+  // UZS uchun minor unit (tiyin) yo'q — Telegram Payments narxni to'g'ridan-to'g'ri so'mda kutadi
+const amount = PROFILE_PRICE;
   try {
     await ctx.telegram.sendInvoice(userId, {
       title: "💳 Profil ko'rish",
@@ -391,7 +390,7 @@ async function sendPaymentInvoice(ctx, db, userId, targetUserId) {
       payload: `view_profile_${userId}_${targetUserId}`,
       provider_token: PROVIDER_TOKEN,
       currency: 'UZS',
-      prices: [{ label: 'Profil ko\'rish', amount: amountInTiyin }],
+      prices: [{ label: 'Profil ko\'rish', amount: amount }],
     });
   } catch (err) {
     console.error('Invoice yuborishda xatolik:', err.message);
