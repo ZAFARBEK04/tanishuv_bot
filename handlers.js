@@ -1,4 +1,5 @@
 const { STEPS, TEXTS, KEYBOARDS, PROFILE_PRICE } = require('./constants');
+const mirpay = require('./mirpay');
 
 // ─── /start ───────────────────────────────────────────────────────────────────
 async function handleStart(ctx, db) {
@@ -370,30 +371,53 @@ async function showEditMenu(ctx, db, userId) {
   });
 }
 
-// ─── To'lov invoysini yuborish (Telegram Payments — Ammer Pay orqali) ───────
+// ─── To'lov havolasini yuborish (MirPay.uz orqali) ──────────────────────────
 async function sendPaymentInvoice(ctx, db, userId, targetUserId) {
-  const PROVIDER_TOKEN = process.env.PAYMENT_PROVIDER_TOKEN || '';
-
-  if (!PROVIDER_TOKEN) {
+  if (!mirpay.isConfigured()) {
     return ctx.reply(TEXTS.PAYMENT_NOT_CONFIGURED, {
       parse_mode: 'HTML',
       reply_markup: KEYBOARDS.BACK,
     });
   }
 
-  // UZS uchun minor unit (tiyin) yo'q — Telegram Payments narxni to'g'ridan-to'g'ri so'mda kutadi
-const amount = PROFILE_PRICE;
   try {
-    await ctx.telegram.sendInvoice(userId, {
-      title: "💳 Profil ko'rish",
-      description: "Ushbu foydalanuvchining to'liq profilini (Telegram username bilan) ko'rish uchun to'lov.",
-      payload: `view_profile_${userId}_${targetUserId}`,
-      provider_token: PROVIDER_TOKEN,
-      currency: 'UZS',
-      prices: [{ label: 'Profil ko\'rish', amount: amount }],
-    });
+    const { payId, payUrl } = await mirpay.createPayment(
+      PROFILE_PRICE,
+      `Profil korish ${userId}->${targetUserId}`
+    );
+
+    if (!payId) {
+      throw new Error("MirPay javobidan payid topilmadi, Railway logini tekshiring");
+    }
+
+    // Webhook kelganda kim kimni ko'rmoqchi ekanini bilish uchun saqlab qo'yamiz
+    await db.createPendingMirpayPayment(userId, targetUserId, PROFILE_PRICE, payId);
+
+    if (payUrl) {
+      await ctx.reply(
+        `💳 <b>${PROFILE_PRICE.toLocaleString('ru-RU')} so'm to'lash uchun havola tayyor.</b>\n\nTo'lovni 15 daqiqa ichida amalga oshiring, aks holda havola yaroqsiz bo'lib qoladi.`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💳 To'lash", url: payUrl }],
+              [{ text: '🔙 Orqaga', callback_data: 'main_menu' }],
+            ],
+          },
+        }
+      );
+    } else {
+      // payUrl topilmadi — lekin payId bor, demak so'rov ketgan.
+      // Railway logida "MirPay create-pay javobi" qatorini ko'rib, qaysi
+      // maydonda havola kelganini bilib, mirpay.js dagi payUrl ro'yxatiga
+      // qo'shish kerak bo'ladi.
+      await ctx.reply(
+        "⚠️ To'lov yaratildi, lekin havola topilmadi. Iltimos, admin bilan bog'laning.",
+        { parse_mode: 'HTML', reply_markup: KEYBOARDS.BACK }
+      );
+    }
   } catch (err) {
-    console.error('Invoice yuborishda xatolik:', err.message);
+    console.error('MirPay to\'lov yaratishda xatolik:', err.message);
     await ctx.reply(
       "💳 <b>To'lov tizimida vaqtincha xatolik.</b>\n\nIltimos, keyinroq urinib ko'ring.",
       { parse_mode: 'HTML', reply_markup: KEYBOARDS.BACK }
@@ -401,37 +425,52 @@ const amount = PROFILE_PRICE;
   }
 }
 
-// ─── To'lov muvaffaqiyatli amalga oshganda profilni ochish ───────────────────
-async function handleSuccessfulPayment(ctx, db) {
-  const userId = ctx.from.id;
-  const payment = ctx.message.successful_payment;
-  const payload = payment.invoice_payload; // "view_profile_{viewerId}_{targetId}"
+// ─── MirPay webhook kelganda chaqiriladi (bot.js dagi /mirpay-webhook dan) ──
+// payload: { payid, summa, status, comment, chek, fiskal, sana }
+async function handleMirpayWebhook(bot, db, payload) {
+  const { payid, status } = payload;
+  if (!payid) return;
 
-  if (!payload.startsWith('view_profile_')) return;
+  const payment = await db.findPaymentByPayId(payid);
+  if (!payment) {
+    console.warn('MirPay webhook: noma\'lum payid:', payid);
+    return;
+  }
 
-  const parts = payload.replace('view_profile_', '').split('_');
-  const viewerId = parseInt(parts[0], 10);
-  const targetId = parseInt(parts[1], 10);
+  // Status muvaffaqiyatli ekanini bildiruvchi mumkin bo'lgan qiymatlar
+  const isPaid = ['paid', 'success', 'muvaffaqiyatli', 'ok', '1', 'true'].includes(
+    String(status).toLowerCase()
+  );
 
-  await db.recordPayment(userId, {
-    targetUserId: targetId,
-    amount: payment.total_amount / 100, // tiyindan so'mga
-    type: 'view_profile',
-    provider: 'telegram',
-    chargeId: payment.telegram_payment_charge_id,
-    status: 'paid',
-  });
+  if (!isPaid) {
+    await db.markMirpayPaymentStatus(payid, 'cancelled');
+    return;
+  }
+
+  await db.markMirpayPaymentStatus(payid, 'paid');
+
+  const viewerId = payment.user_id;
+  const targetId = payment.target_user_id;
 
   await db.markLikePaid(targetId, viewerId);
 
-  await ctx.reply(TEXTS.PAYMENT_SUCCESS, { parse_mode: 'HTML' });
-  await showUserProfile(ctx, db, viewerId, targetId, true);
+  try {
+    await bot.telegram.sendMessage(viewerId, TEXTS.PAYMENT_SUCCESS, { parse_mode: 'HTML' });
+  } catch (e) {
+    // foydalanuvchi botni bloklagan bo'lishi mumkin
+  }
+
+  // showUserProfile funksiyasi faqat ctx.telegram dan foydalanadi,
+  // shuning uchun soxta ctx obyekti bilan qayta ishlatamiz
+  await showUserProfile({ telegram: bot.telegram }, db, viewerId, targetId, true);
 }
+
+
 
 module.exports = {
   handleStart,
   handleMessage,
   handlePhoto,
   handleCallback,
-  handleSuccessfulPayment,
+  handleMirpayWebhook,
 };

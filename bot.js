@@ -35,13 +35,6 @@ bot.on('text', (ctx) => {
 
 bot.on('callback_query', (ctx) => handlers.handleCallback(ctx, db));
 
-// ─── Telegram Payments (Ammer Pay orqali ulangan) ───────────────────────────
-// Pre-checkout — to'lov tasdiqlanishidan oldin Telegram so'raydi, "OK" deb javob berish kerak
-bot.on('pre_checkout_query', (ctx) => ctx.answerPreCheckoutQuery(true).catch(() => {}));
-
-// To'lov muvaffaqiyatli amalga oshganda
-bot.on('successful_payment', (ctx) => handlers.handleSuccessfulPayment(ctx, db));
-
 bot.catch((err, ctx) => {
   console.error('Bot xatosi:', err);
   ctx.reply('❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko\'ring yoki /start bosing.').catch(() => {});
@@ -49,6 +42,23 @@ bot.catch((err, ctx) => {
 
 // Railway "health check" uchun oddiy javob
 app.get('/', (req, res) => res.send('🤖 Tanishuv bot ishlayapti'));
+
+// ─── MirPay.uz webhook ───────────────────────────────────────────────────────
+// MirPay "Ma'lumotlarni qabul qilish" so'rovini shu yo'lga POST qiladi.
+// Body formati: application/x-www-form-urlencoded
+// (MirPay.uz saytida Kassa sozlamalari ichida "Muvaffaqiyatli to'lov" va
+// "Muvaffaqiyatsiz to'lov" havolalarini shu manzilga (PUBLIC_URL +
+// /mirpay-webhook) ko'rsatish kerak, masalan:
+// https://sizning-domen.up.railway.app/mirpay-webhook)
+app.post('/mirpay-webhook', express.urlencoded({ extended: true }), async (req, res) => {
+  try {
+    console.log('MirPay webhook keldi:', req.body);
+    await handlers.handleMirpayWebhook(bot, db, req.body);
+  } catch (err) {
+    console.error('MirPay webhookni qayta ishlashda xatolik:', err.message);
+  }
+  res.sendStatus(200); // MirPay'ga "qabul qilindi" deb javob beramiz
+});
 
 // ─── Ishga tushirish ─────────────────────────────────────────────────────────
 async function main() {
@@ -63,6 +73,7 @@ async function main() {
     console.log(`✅ Webhook o'rnatildi: https://${PUBLIC_URL}${webhookPath}`);
   } else {
     // Polling rejimi — lokal test uchun qulay
+    console.warn('⚠️ PUBLIC_URL o\'rnatilmagan — bot polling rejimida ishga tushmoqda. Railway\'da bu 409 Conflict xatosiga olib kelishi mumkin, Variables bo\'limiga PUBLIC_URL qo\'shing.');
     app.listen(PORT, () => console.log(`✅ Server ${PORT} portda ishga tushdi`));
     await bot.launch();
     console.log('✅ Bot polling rejimida ishga tushdi');

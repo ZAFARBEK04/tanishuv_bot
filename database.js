@@ -29,8 +29,9 @@ const paymentSchema = new mongoose.Schema({
   target_user_id: { type: Number, default: null },
   amount: { type: Number, default: 0 },
   type: { type: String, default: '' },
-  provider: { type: String, default: 'telegram' }, // 'telegram' (Ammer Pay orqali ulangan)
-  telegram_charge_id: { type: String, default: null }, // Telegram to'lov tasdiqlash ID'si
+  provider: { type: String, default: 'mirpay' }, // 'mirpay' | 'telegram'
+  telegram_charge_id: { type: String, default: null }, // Telegram to'lov tasdiqlash ID'si (eski usul uchun)
+  mirpay_payid: { type: String, default: null, index: true }, // MirPay to'lov identifikatori
   status: { type: String, default: 'pending' }, // pending | paid | cancelled
 }, { timestamps: { createdAt: 'created_at', updatedAt: false } });
 
@@ -162,8 +163,32 @@ class Database {
       type: data.type,
       provider: data.provider || 'telegram',
       telegram_charge_id: data.chargeId || null,
+      mirpay_payid: data.mirpayPayId || null,
       status: data.status || 'paid',
     });
+  }
+
+  // ── MirPay: to'lov "pending" holatda yaratilganda saqlanadi ──
+  async createPendingMirpayPayment(userId, targetUserId, amount, payId) {
+    return this.Payment.create({
+      user_id: userId,
+      target_user_id: targetUserId,
+      amount,
+      type: 'view_profile',
+      provider: 'mirpay',
+      mirpay_payid: payId,
+      status: 'pending',
+    });
+  }
+
+  // ── MirPay: webhook kelganda payid orqali to'lovni topish ──
+  async findPaymentByPayId(payId) {
+    return this.Payment.findOne({ mirpay_payid: payId }).lean();
+  }
+
+  // ── MirPay: webhook kelganda statusni yangilash ──
+  async markMirpayPaymentStatus(payId, status) {
+    return this.Payment.updateOne({ mirpay_payid: payId }, { $set: { status } });
   }
 
   // ── Profilni ko'rish uchun to'lov qilinganmi? ──
