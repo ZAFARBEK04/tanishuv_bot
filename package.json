@@ -1,0 +1,22 @@
+{
+  "name": "tanishuv-bot",
+  "version": "1.0.0",
+  "description": "Telegram Dating Bot for Uzbekistan — Node.js + Telegraf + MongoDB",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "mongoose": "^8.5.1",
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
