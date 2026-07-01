@@ -55,6 +55,29 @@ async function handleMessage(ctx, db) {
     return;
   }
 
+  // Ro'yxatdan o'tishda kasb kiritish
+  if (step === STEPS.ASK_KASB) {
+    const kasb = text.trim();
+    if (!kasb || kasb.length < 2 || kasb.length > 50) {
+      return ctx.reply("❌ Iltimos, kasbingizni to'g'ri kiriting (2-50 ta belgi)");
+    }
+    await db.upsertUser(userId, { kasb, step: STEPS.ASK_PHOTO });
+    return ctx.reply(`💼 Kasb: <b>${kasb}</b>\n\n${TEXTS.ASK_PHOTO}`, { parse_mode: 'HTML' });
+  }
+
+  // Tahrirlashda kasb kiritish
+  if (step === STEPS.EDIT_KASB) {
+    const kasb = text.trim();
+    if (!kasb || kasb.length < 2 || kasb.length > 50) {
+      return ctx.reply("❌ Iltimos, kasbingizni to'g'ri kiriting (2-50 ta belgi)");
+    }
+    await db.upsertUser(userId, { kasb, step: STEPS.DONE });
+    return ctx.reply('✅ Kasbingiz yangilandi!', {
+      parse_mode: 'HTML',
+      reply_markup: KEYBOARDS.MAIN_MENU,
+    });
+  }
+
   // Ro'yxatdan o'tishda yosh kiritish
   if (step === STEPS.ASK_AGE) {
     const age = parseInt(text, 10);
@@ -160,9 +183,9 @@ async function handleCallback(ctx, db) {
   if (data.startsWith('gender_')) {
     const gender = data === 'gender_male' ? 'male' : 'female';
     const genderText = gender === 'male' ? '👨 Erkak' : '👩 Ayol';
-    await db.upsertUser(userId, { gender, step: STEPS.ASK_PHOTO });
+    await db.upsertUser(userId, { gender, step: STEPS.ASK_KASB });
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
-    return ctx.reply(`👤 Jins: <b>${genderText}</b>\n\n${TEXTS.ASK_PHOTO}`, { parse_mode: 'HTML' });
+    return ctx.reply(`👤 Jins: <b>${genderText}</b>\n\n${TEXTS.ASK_KASB}`, { parse_mode: 'HTML' });
   }
 
   // ── Asosiy menyu ──
@@ -190,6 +213,11 @@ async function handleCallback(ctx, db) {
   if (data === 'edit_photo') {
     await db.setStep(userId, STEPS.EDIT_PHOTO);
     return ctx.reply(TEXTS.ASK_PHOTO, { parse_mode: 'HTML' });
+  }
+
+  if (data === 'edit_kasb') {
+    await db.setStep(userId, STEPS.EDIT_KASB);
+    return ctx.reply(TEXTS.ASK_KASB, { parse_mode: 'HTML' });
   }
 
   // ── Viloyatni tahrirlash ──
@@ -274,6 +302,19 @@ async function handleCallback(ctx, db) {
     const targetUserId = parseInt(data.replace('pay_', ''), 10);
     return sendPaymentInvoice(ctx, db, userId, targetUserId);
   }
+
+  // ── Qidiruvdan profilni ochish (to'lov orqali) ──
+  if (data.startsWith('open_profile_')) {
+    const targetUserId = parseInt(data.replace('open_profile_', ''), 10);
+    const hasPaid = await db.hasPaid(userId, targetUserId);
+    if (hasPaid) {
+      return showUserProfile(ctx, db, userId, targetUserId, true);
+    }
+    return ctx.reply(TEXTS.PAYMENT_REQUIRED(PROFILE_PRICE), {
+      parse_mode: 'HTML',
+      reply_markup: KEYBOARDS.PAY(targetUserId, PROFILE_PRICE),
+    });
+  }
 }
 
 // ─── Qidiruvni boshlash ───────────────────────────────────────────────────────
@@ -308,9 +349,10 @@ async function showUserProfile(ctx, db, viewerId, targetUserId, showContact) {
   if (!target) return;
 
   const genderText = target.gender === 'male' ? '👨 Erkak' : '👩 Ayol';
+  const kasbText = target.kasb ? `\n💼 Kasb: ${target.kasb}` : '';
   const caption = showContact
-    ? `<b>${target.first_name || 'Foydalanuvchi'}</b>, ${target.age} yosh\n📍 ${target.region}\n${genderText}\n\n💬 Telegram: @${target.username || "username yo'q"}`
-    : `<b>${target.first_name || 'Foydalanuvchi'}</b>, ${target.age} yosh\n📍 ${target.region}\n${genderText}`;
+    ? `<b>${target.first_name || 'Foydalanuvchi'}</b>, ${target.age} yosh\n📍 ${target.region}\n${genderText}${kasbText}\n\n💬 Telegram: @${target.username || "username yo'q"}`
+    : `<b>${target.first_name || 'Foydalanuvchi'}</b>, ${target.age} yosh\n📍 ${target.region}\n${genderText}${kasbText}`;
 
   const markup = showContact ? KEYBOARDS.BACK : KEYBOARDS.SEARCH_ACTIONS(target.user_id);
 
@@ -350,7 +392,8 @@ async function showMyProfile(ctx, db, userId) {
   }
 
   const genderText = user.gender === 'male' ? '👨 Erkak' : '👩 Ayol';
-  const caption = `👤 <b>Mening anketam</b>\n\n🏷 Ism: <b>${user.first_name}</b>\n🎂 Yosh: <b>${user.age}</b>\n📍 Viloyat: <b>${user.region}</b>\n${genderText}`;
+  const kasbText = user.kasb ? `\n💼 Kasb: <b>${user.kasb}</b>` : '';
+  const caption = `👤 <b>Mening anketam</b>\n\n🏷 Ism: <b>${user.first_name}</b>\n🎂 Yosh: <b>${user.age}</b>\n📍 Viloyat: <b>${user.region}</b>\n${genderText}${kasbText}`;
 
   if (user.photo_file_id) {
     await ctx.replyWithPhoto(user.photo_file_id, {

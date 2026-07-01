@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
   region: { type: String, default: null },
   age: { type: Number, default: null },
   gender: { type: String, default: null }, // 'male' | 'female'
+  kasb: { type: String, default: null },
   photo_file_id: { type: String, default: null },
   step: { type: String, default: 'start' },
   search_min_age: { type: Number, default: 18 },
