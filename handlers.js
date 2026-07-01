@@ -34,6 +34,15 @@ async function askRegion(ctx, db, userId) {
   });
 }
 
+// ─── Ask age (tugmalar orqali) ─────────────────────────────────────────────────
+async function askAge(ctx, db, userId, isEdit = false) {
+  await db.setStep(userId, isEdit ? STEPS.EDIT_AGE : STEPS.ASK_AGE);
+  await ctx.reply(TEXTS.ASK_AGE, {
+    parse_mode: 'HTML',
+    reply_markup: KEYBOARDS.AGE_SELECT,
+  });
+}
+
 // ─── Handle text messages ──────────────────────────────────────────────────────
 async function handleMessage(ctx, db) {
   const userId = ctx.from.id;
@@ -49,7 +58,7 @@ async function handleMessage(ctx, db) {
   // Asosiy menyu tugmalari
   if (step === STEPS.DONE) {
     if (text === '🔍 Qidiruv') return startSearch(ctx, db, userId);
-    if (text === '❤️ Layklarim') return showLikes(ctx, db, userId);
+    if (text === '❤️ Layklarim') return showLikesMenu(ctx, db, userId);
     if (text === '📝 Anketam') return showMyProfile(ctx, db, userId);
     if (text === '✏️ Tahrirlash') return showEditMenu(ctx, db, userId);
     return;
@@ -78,55 +87,13 @@ async function handleMessage(ctx, db) {
     });
   }
 
-  // Ro'yxatdan o'tishda yosh kiritish
-  if (step === STEPS.ASK_AGE) {
-    const age = parseInt(text, 10);
-    if (isNaN(age) || age < 14 || age > 80) {
-      return ctx.reply(TEXTS.INVALID_AGE, { parse_mode: 'HTML' });
-    }
-    await db.upsertUser(userId, { age, step: STEPS.ASK_GENDER });
-    return ctx.reply(TEXTS.ASK_GENDER, {
-      parse_mode: 'HTML',
-      reply_markup: KEYBOARDS.GENDER,
-    });
-  }
+  // Ro'yxatdan o'tishda yosh — endi tugmalar orqali (callback), matn kerak emas
 
-  // Tahrirlashda yosh kiritish
-  if (step === STEPS.EDIT_AGE) {
-    const age = parseInt(text, 10);
-    if (isNaN(age) || age < 14 || age > 80) {
-      return ctx.reply(TEXTS.INVALID_AGE, { parse_mode: 'HTML' });
-    }
-    await db.upsertUser(userId, { age, step: STEPS.DONE });
-    return ctx.reply('✅ Yoshingiz yangilandi!', {
-      parse_mode: 'HTML',
-      reply_markup: KEYBOARDS.MAIN_MENU,
-    });
-  }
+  // Tahrirlashda yosh — endi tugmalar orqali (callback), matn kerak emas
 
-  // Qidiruv: minimal yosh
-  if (step === STEPS.SEARCH_AGE_MIN) {
-    const age = parseInt(text, 10);
-    if (isNaN(age) || age < 14 || age > 80) {
-      return ctx.reply("❌ To'g'ri yosh kiriting (14-80)");
-    }
-    await db.upsertUser(userId, { search_min_age: age, step: STEPS.SEARCH_AGE_MAX });
-    return ctx.reply(TEXTS.SEARCH_AGE_MAX(age), { parse_mode: 'HTML' });
-  }
+  // Qidiruv: minimal yosh — endi tugmalar orqali (callback)
 
-  // Qidiruv: maksimal yosh
-  if (step === STEPS.SEARCH_AGE_MAX) {
-    const minAge = user.search_min_age || 18;
-    const age = parseInt(text, 10);
-    if (isNaN(age) || age < minAge || age > 80) {
-      return ctx.reply(`❌ To'g'ri yosh kiriting (${minAge}-80)`);
-    }
-    await db.upsertUser(userId, { search_max_age: age, step: STEPS.SEARCH_REGION });
-    return ctx.reply(TEXTS.SEARCH_REGION, {
-      parse_mode: 'HTML',
-      reply_markup: KEYBOARDS.SEARCH_REGION,
-    });
-  }
+  // Qidiruv: maksimal yosh — endi tugmalar orqali (callback)
 }
 
 // ─── Handle photos ─────────────────────────────────────────────────────────────
@@ -172,11 +139,14 @@ async function handleCallback(ctx, db) {
   if (!user && data !== 'main_menu') return;
 
   // ── Viloyat tanlash (ro'yxatdan o'tish) ──
-  if (data.startsWith('region_')) {
+  if (data.startsWith('region_') && user.step !== STEPS.EDIT_REGION) {
     const region = data.replace('region_', '');
     await db.upsertUser(userId, { region, step: STEPS.ASK_AGE });
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
-    return ctx.reply(`📍 Viloyat: <b>${region}</b>\n\n${TEXTS.ASK_AGE}`, { parse_mode: 'HTML' });
+    return ctx.reply(`📍 Viloyat: <b>${region}</b>\n\n${TEXTS.ASK_AGE}`, {
+      parse_mode: 'HTML',
+      reply_markup: KEYBOARDS.AGE_SELECT,
+    });
   }
 
   // ── Jins tanlash (ro'yxatdan o'tish) ──
@@ -202,7 +172,7 @@ async function handleCallback(ctx, db) {
 
   if (data === 'edit_age') {
     await db.setStep(userId, STEPS.EDIT_AGE);
-    return ctx.reply(TEXTS.ASK_AGE, { parse_mode: 'HTML' });
+    return ctx.reply(TEXTS.ASK_AGE, { parse_mode: 'HTML', reply_markup: KEYBOARDS.AGE_SELECT });
   }
 
   if (data === 'edit_gender') {
@@ -282,6 +252,51 @@ async function handleCallback(ctx, db) {
     return findAndShowUser(ctx, db, userId);
   }
 
+  // ── Yosh tanlash — ro'yxatdan o'tish va tahrirlash ──
+  if (data.startsWith('age_')) {
+    const age = parseInt(data.replace('age_', ''), 10);
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+    if (user.step === STEPS.EDIT_AGE) {
+      await db.upsertUser(userId, { age, step: STEPS.DONE });
+      return ctx.reply(`✅ Yosh <b>${age}</b> ga yangilandi!`, {
+        parse_mode: 'HTML',
+        reply_markup: KEYBOARDS.MAIN_MENU,
+      });
+    }
+    // Ro'yxatdan o'tish
+    await db.upsertUser(userId, { age, step: STEPS.ASK_GENDER });
+    return ctx.reply(`🎂 Yosh: <b>${age}</b>\n\n${TEXTS.ASK_GENDER}`, {
+      parse_mode: 'HTML',
+      reply_markup: KEYBOARDS.GENDER,
+    });
+  }
+
+  // ── Qidiruv: minimal yosh ──
+  if (data.startsWith('sage_min_')) {
+    const age = parseInt(data.replace('sage_min_', ''), 10);
+    await db.upsertUser(userId, { search_min_age: age, step: STEPS.SEARCH_AGE_MAX });
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+    return ctx.reply(
+      `📊 Minimal yosh: <b>${age}</b>\n\nEndi maksimal yoshni tanlang:`,
+      { parse_mode: 'HTML', reply_markup: KEYBOARDS.SEARCH_AGE_MAX_SELECT(age) }
+    );
+  }
+
+  // ── Qidiruv: maksimal yosh ──
+  if (data.startsWith('sage_max_')) {
+    const age = parseInt(data.replace('sage_max_', ''), 10);
+    await db.upsertUser(userId, { search_max_age: age, step: STEPS.SEARCH_REGION });
+    await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {});
+    return ctx.reply(
+      `📊 Maksimal yosh: <b>${age}</b>\n\n${TEXTS.SEARCH_REGION}`,
+      { parse_mode: 'HTML', reply_markup: KEYBOARDS.SEARCH_REGION }
+    );
+  }
+
+  // ── Layklar bo'limi ──
+  if (data === 'likes_received') return showLikesReceived(ctx, db, userId);
+  if (data === 'likes_sent') return showLikesSent(ctx, db, userId);
+
   // ── Layk bosgan odamning profilini ko'rish (to'lov talab qilinadi) ──
   if (data.startsWith('see_liker_')) {
     const likerId = parseInt(data.replace('see_liker_', ''), 10);
@@ -294,6 +309,19 @@ async function handleCallback(ctx, db) {
     return ctx.reply(TEXTS.PAYMENT_REQUIRED(PROFILE_PRICE), {
       parse_mode: 'HTML',
       reply_markup: KEYBOARDS.PAY(likerId, PROFILE_PRICE),
+    });
+  }
+
+  // ── Men layk bosgan odamning profilini ko'rish ──
+  if (data.startsWith('see_liked_')) {
+    const targetId = parseInt(data.replace('see_liked_', ''), 10);
+    const hasPaid = await db.hasPaid(userId, targetId);
+    if (hasPaid) {
+      return showUserProfile(ctx, db, userId, targetId, true);
+    }
+    return ctx.reply(TEXTS.PAYMENT_REQUIRED(PROFILE_PRICE), {
+      parse_mode: 'HTML',
+      reply_markup: KEYBOARDS.PAY(targetId, PROFILE_PRICE),
     });
   }
 
@@ -321,7 +349,10 @@ async function handleCallback(ctx, db) {
 async function startSearch(ctx, db, userId) {
   await db.setStep(userId, STEPS.SEARCH_AGE_MIN);
   await ctx.reply(TEXTS.SEARCH_TITLE, { parse_mode: 'HTML' });
-  await ctx.reply(TEXTS.SEARCH_AGE_MIN, { parse_mode: 'HTML' });
+  await ctx.reply('📊 <b>Minimal yoshni tanlang:</b>', {
+    parse_mode: 'HTML',
+    reply_markup: KEYBOARDS.SEARCH_AGE_MIN_SELECT,
+  });
 }
 
 // ─── Mos foydalanuvchini topish va ko'rsatish ────────────────────────────────
@@ -367,21 +398,46 @@ async function showUserProfile(ctx, db, viewerId, targetUserId, showContact) {
   }
 }
 
-// ─── Layklarni ko'rsatish ─────────────────────────────────────────────────────
-async function showLikes(ctx, db, userId) {
+// ─── Layklar bo'limi menyusi ──────────────────────────────────────────────────
+async function showLikesMenu(ctx, db, userId) {
+  await ctx.reply(
+    '❤️ <b>Layklar bo\'limi</b>\n\nQaysi bo\'limni ko\'rmoqchisiz?',
+    { parse_mode: 'HTML', reply_markup: KEYBOARDS.LIKES_MENU }
+  );
+}
+
+// ─── Menga layk bosganlar ─────────────────────────────────────────────────────
+async function showLikesReceived(ctx, db, userId) {
   const likes = await db.getLikesReceived(userId);
 
   if (likes.length === 0) {
-    return ctx.reply("😔 Hozircha layk yo'q.\n\nFaol bo'ling, qidiruv orqali layk bering!", {
-      parse_mode: 'HTML',
-      reply_markup: KEYBOARDS.BACK,
-    });
+    return ctx.reply(
+      "😔 Hozircha sizga layk bosgan odam yo'q.\n\nQidiruv orqali faol bo'ling!",
+      { parse_mode: 'HTML', reply_markup: KEYBOARDS.LIKES_MENU }
+    );
   }
 
-  await ctx.reply(`❤️ <b>Sizga ${likes.length} ta layk keldi:</b>\n\nProfilni ko'rish uchun bosing:`, {
-    parse_mode: 'HTML',
-    reply_markup: KEYBOARDS.LIKES_LIST(likes),
-  });
+  await ctx.reply(
+    `💌 <b>Sizga ${likes.length} ta layk bosdi:</b>\n\nProfilni ko'rish uchun bosing (to'lov talab qilinadi):`,
+    { parse_mode: 'HTML', reply_markup: KEYBOARDS.LIKES_RECEIVED_LIST(likes) }
+  );
+}
+
+// ─── Men layk bosganlar ───────────────────────────────────────────────────────
+async function showLikesSent(ctx, db, userId) {
+  const likes = await db.getLikesSent(userId);
+
+  if (likes.length === 0) {
+    return ctx.reply(
+      "😔 Siz hali hech kimga layk bosmadingiz.\n\nQidiruv orqali yangi tanishuvlar toping!",
+      { parse_mode: 'HTML', reply_markup: KEYBOARDS.LIKES_MENU }
+    );
+  }
+
+  await ctx.reply(
+    `❤️ <b>Siz ${likes.length} ta odamga layk bosdingiz:</b>\n\n✅ — profil ochiq | 🔒 — to'lov kerak`,
+    { parse_mode: 'HTML', reply_markup: KEYBOARDS.LIKES_SENT_LIST(likes) }
+  );
 }
 
 // ─── O'z profilini ko'rsatish ─────────────────────────────────────────────────

@@ -40,7 +40,7 @@ const PROFILE_PRICE = parseInt(process.env.PROFILE_PRICE || '5000', 10);
 const TEXTS = {
   WELCOME: (name) => `👋 Salom, <b>${name}</b>!\n\n💕 <b>TanishuvBot</b>ga xush kelibsiz!\n\nAnketa to'ldirish uchun davom eting.`,
   ASK_REGION: "📍 <b>Qaysi viloyatdansiz?</b>\n\nQuyidagi ro'yxatdan tanlang:",
-  ASK_AGE: '🎂 <b>Yoshingiz nechada?</b>\n\n(Faqat raqam yozing, masalan: 25)',
+  ASK_AGE: '🎂 <b>Yoshingizni tanlang:</b>',
   ASK_GENDER: '👤 <b>Jinsingiz?</b>',
   ASK_KASB: '💼 <b>Kasbingiz nima?</b>\n\n(Masalan: Dasturchi, O\'qituvchi, Shifokor, Talaba va h.k.)',
   ASK_PHOTO: '📸 <b>Rasmingizni yuboring!</b>\n\n(Eng yaxshi rasmingizni yuboring 😊)',
@@ -61,6 +61,42 @@ const TEXTS = {
 };
 
 const KEYBOARDS = {
+  // 18 dan 60 gacha yoshlar, har qatorda 6 ta (ro'yxatdan o'tish va tahrirlash uchun)
+  AGE_SELECT: (() => {
+    const rows = [];
+    for (let start = 18; start <= 60; start += 6) {
+      const row = [];
+      for (let age = start; age < start + 6 && age <= 60; age++) {
+        row.push({ text: String(age), callback_data: `age_${age}` });
+      }
+      rows.push(row);
+    }
+    return { inline_keyboard: rows };
+  })(),
+  // Qidiruv: minimal yosh (18-55)
+  SEARCH_AGE_MIN_SELECT: (() => {
+    const rows = [];
+    for (let start = 18; start <= 55; start += 6) {
+      const row = [];
+      for (let age = start; age < start + 6 && age <= 55; age++) {
+        row.push({ text: String(age), callback_data: `sage_min_${age}` });
+      }
+      rows.push(row);
+    }
+    return { inline_keyboard: rows };
+  })(),
+  // Qidiruv: maksimal yosh (min+1 dan 60 gacha, dinamik)
+  SEARCH_AGE_MAX_SELECT: (minAge) => {
+    const rows = [];
+    const start = Math.min(minAge + 1, 60);
+    let row = [];
+    for (let age = start; age <= 60; age++) {
+      row.push({ text: String(age), callback_data: `sage_max_${age}` });
+      if (row.length === 6) { rows.push(row); row = []; }
+    }
+    if (row.length) rows.push(row);
+    return { inline_keyboard: rows };
+  },
   GENDER: {
     inline_keyboard: [
       [
@@ -95,14 +131,39 @@ const KEYBOARDS = {
       [{ text: '🏠 Asosiy menyu', callback_data: 'main_menu' }],
     ],
   }),
-  LIKES_LIST: (likes) => ({
+  // Layklar bo'limi: ikki tab
+  LIKES_MENU: {
+    inline_keyboard: [
+      [
+        { text: '💌 Menga layk bosganlar', callback_data: 'likes_received' },
+        { text: '❤️ Men layk bosganlar', callback_data: 'likes_sent' },
+      ],
+      [{ text: '🏠 Asosiy menyu', callback_data: 'main_menu' }],
+    ],
+  },
+  // Menga layk bosganlar ro'yxati
+  LIKES_RECEIVED_LIST: (likes) => ({
     inline_keyboard: [
       ...likes.map((l) => [
         {
-          text: `❤️ ${l.first_name || 'Foydalanuvchi'}, ${l.age} yosh — ${l.region}`,
+          text: `💌 ${l.first_name || 'Foydalanuvchi'}, ${l.age || '?'} yosh — ${l.region || '?'}`,
           callback_data: `see_liker_${l.from_user_id}`,
         },
       ]),
+      [{ text: '❤️ Men layk bosganlar', callback_data: 'likes_sent' }],
+      [{ text: '🏠 Asosiy menyu', callback_data: 'main_menu' }],
+    ],
+  }),
+  // Men layk bosganlar ro'yxati
+  LIKES_SENT_LIST: (likes) => ({
+    inline_keyboard: [
+      ...likes.map((l) => [
+        {
+          text: `${l.paid ? '✅' : '🔒'} ${l.first_name || 'Foydalanuvchi'}, ${l.age || '?'} yosh — ${l.region || '?'}`,
+          callback_data: `see_liked_${l.to_user_id}`,
+        },
+      ]),
+      [{ text: '💌 Menga layk bosganlar', callback_data: 'likes_received' }],
       [{ text: '🏠 Asosiy menyu', callback_data: 'main_menu' }],
     ],
   }),

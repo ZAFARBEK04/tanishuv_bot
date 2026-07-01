@@ -147,6 +147,29 @@ class Database {
     });
   }
 
+  // ── Foydalanuvchi layk bosganlar ro'yxati ──
+  async getLikesSent(userId) {
+    const likes = await this.Like.find({ from_user_id: userId }).lean();
+    if (!likes.length) return [];
+
+    const toIds = likes.map((l) => l.to_user_id);
+    const users = await this.User.find({ user_id: { $in: toIds } }).lean();
+    const userMap = new Map(users.map((u) => [u.user_id, u]));
+
+    return likes.map((l) => {
+      const u = userMap.get(l.to_user_id) || {};
+      return {
+        from_user_id: l.from_user_id,
+        to_user_id: l.to_user_id,
+        paid: l.paid,
+        first_name: u.first_name,
+        age: u.age,
+        region: u.region,
+        gender: u.gender,
+      };
+    });
+  }
+
   // ── Layk uchun to'lov qilingan deb belgilash (profil ochiladi) ──
   async markLikePaid(fromUserId, toUserId) {
     return this.Like.updateOne(
